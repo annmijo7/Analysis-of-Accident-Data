@@ -1,0 +1,231 @@
+---
+title: "Mini Project"
+author: "Ann Joseph"
+date: "February 23, 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+#Analysis of Accident Data
+##Introduction
+For this mini project, I've used an accident data set from the UK. This data set has 2661 rows and 15 rows. 
+The predictor variables will be variables describing an accident including the date and time the accident took place, the number of vehicles involved in the accident, road characteristics, weather characteristics, vehicle type and information about the person injured.
+
+Based on these predictors, I want to be able to predict the "Casualty Severity" and this will be my response variable for this analysis. It is a binary variable with two values : Slight and Serious.
+
+The prediction of this variable can be useful at the time of an accident to decide which resources to send to the place of occurance and how serious the accident is. 
+
+
+##Data Preprocessing
+The first step is to clean the data. This includes checking for missing values, removing columns that are insignificant to the analysis such as accident number, removing duplicate rows, factorising columns, checking for outliers, etc. 
+
+In this data set, almost all the predictors and the response are categorical variables so factorising them was necessary. There were a couple of columns that weren't important so those were removed. There were duplicate rows and the duplicates were removed. 
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(fig.pos = 'H')
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+library(ggplot2)
+library(MASS)
+library(dplyr)
+library(DataExplorer)
+library(tidyverse)
+library(caret)
+library("e1071")
+library(earth)
+library(lmtest)
+accident_data = read.csv(
+  "C://Users//annjo//Desktop//MDAWestern//2ndSem//AdvancedDataAnalytics//accidentdata.csv",
+  quote = "\"",
+  comment.char = "",
+  stringsAsFactors = FALSE)
+
+#DATA PREPROCESSING
+#changing Accident_Date to type 'date'
+accident_data$Accident_Date<-as.Date(accident_data$Accident_Date)
+# create variables of the week and month of each observation:
+accident_data$Month <- as.Date(cut(accident_data$Accident_Date,
+                                   breaks = "month"))
+#factorising columns
+accident_data$Road_Class<- as.factor(accident_data$Road_Class) #Road_Class
+
+#there was a random 5 in this column, changed that to unknown
+accident_data$Road_Surface[accident_data$Road_Surface=="5"]<-"Unknown" 
+accident_data$Road_Surface<- as.factor(accident_data$Road_Surface)
+accident_data$Lighting_Conditions<-as.factor(accident_data$Lighting_Conditions)
+accident_data$Weather_Conditions<-as.factor(accident_data$Weather_Conditions)
+accident_data$Casualty_Class<- as.factor(accident_data$Casualty_Class) 
+accident_data$Casualty_Severity <- as.factor(accident_data$Casualty_Severity) 
+accident_data$Sex<- as.factor(accident_data$Sex)
+accident_data$Vehicle_Type<- as.factor(accident_data$Vehicle_Type)
+
+#removing duplicate rows
+accident_data<-accident_data[!duplicated(accident_data), ]
+#Check for missing values
+plot_missing(accident_data)
+#Outliers
+plot(accident_data$Number_of_Vehicles)
+which(accident_data$Number_of_Vehicles>7)
+accident_data<-accident_data[-c(75,76,77,2563,2564,2565),]
+```
+
+
+##Data Exploration
+Next, it's important to visualise the data and get a sense of the information it portrays.
+The following are a few plots that I thought were interesting.
+```{r, echo=FALSE}
+#Lighting Conditions with Sex - Most number of accidents happen during Daytime
+g<-ggplot(accident_data, aes(x=Lighting_Conditions, fill=Casualty_Severity)) +
+  geom_bar()
+g + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+#Vehicle type with Casualty Severity - most number of accidents in cars, but most number of fatal and serious accidents in Pedal Cycles
+g<-ggplot(accident_data, aes(x=Vehicle_Type, fill=Casualty_Severity)) +
+  geom_bar()
+g + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+#Casualty Class
+ggplot(accident_data, aes(x=Casualty_Class, fill=Casualty_Severity)) +
+  geom_bar()
+```
+
+In the first plot, we see that the most number of accidents happen during daytime and when street lights are present.
+
+In the second plot, we see that the most number of accidents happen with cars, but the most number of fatal and serious accidents in pedal cycles
+
+In the third plot, we see that the most number of accidents including serious accidents, happen to the driver. This is interesting because I had assumed that it would have been a pedestrian. 
+
+
+##Data Modelling
+###Splitting Data
+The first step in data modelling is splitting the data set into a training and a test set. This is done in a ratio of 75:25
+```{r, include=FALSE}
+smp_size <- floor(0.75 * nrow(accident_data))
+set.seed(123) 
+train_ind <- sample(seq_len(nrow(accident_data)), size = smp_size)
+train <- accident_data[train_ind, ] #training set
+test <- accident_data[-train_ind, ] #test set
+```
+
+For this analysis, I have decided to use three models, i.e., Logistic Regression, MARS and SVM and will do repeated cross validation to get the best model.
+
+The performance metric that I will be using is accuracy. But I am also taking into account the fact that a declaring a person as having a serious injury when they really don't is better than predicting that an injury is slight when in reality, it is serious. 
+
+**Hence, in this analysis, both accuracy and sensitivity are important.**
+
+##Logistic Regression
+The first model that I will be using is logistic regression. From the residual and QQ plots shown below, we see that neither normality nor equal variance assumptions hold true. For this model, the $R^2$ was calculated and found to be as below.
+
+```{r, echo=FALSE}
+logmod<-glm(Casualty_Severity~., data=train, family=binomial)
+DMLE <- logmod$deviance
+DNULL <- logmod$null.deviance
+n <- nrow(accident_data)
+Rsq <- (1-exp((DMLE-DNULL)/n)) / (1-exp(-DMLE)/n)
+Rsq #74%
+
+library(lmtest)
+# Residual plot (fitted vs resid)
+plot(fitted(logmod), resid(logmod), col = "grey", pch = 20,
+     xlab = "Fitted", ylab = "Residuals", main = "Equal Variance does not hold")
+abline(h = 0, col = "darkorange", lwd = 2)
+
+qqnorm(resid(logmod), main = "Normality does not hold")
+qqline(resid(logmod), col = "dodgerblue", lwd = 2)
+
+```
+
+Stepwise Regression was done on this model to get the best model based on AIC. It was done in a forward stagewise manner. But it was found that the $R^2$ was almost the same and this model also violated model assumptions. Hence, I did not move forward with the the stepwise regression model.
+
+Next, cross validation was done using 10 folds and parameters were tuned to get the best model with the best accuracy which is 88.77%. But, the sensitivity of this model is only 9.5%
+
+```{r, include=FALSE}
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(3233)
+std_model <- train( Casualty_Severity~., data = train, method = "LogitBoost",
+                    trControl=trctrl,
+                    preProcess = c("center", "scale"),
+                    tuneLength = 10)
+std_pred <- predict(std_model, newdata = test)
+std_pred
+confusionMatrix(std_pred, test$Casualty_Severity) #88.77%
+```
+
+##Multivariate Adaptive Regression Splines (MARS)
+The next model I used a MARS model. 
+
+As you can see from the below graphs of the residual plot and the QQ plot, it looks like both the equal variance assumption and the normality assumption are violated.
+```{r,echo=FALSE}
+mars<-earth(Casualty_Severity~.,data=train,pmethod="backward",nprune=20, nfold=10)
+plot(mars) 
+```
+
+Next, cross validation was done using 10 folds and parameters were tuned to get the best model with the best accuracy 89.38% but the sensitivity is only 3.17%
+
+```{r, include=FALSE}
+mars_model <- train( Casualty_Severity~., data = train, method = "gcvEarth",
+                     trControl=trctrl,
+                     preProcess = c("center", "scale"),
+                     tuneLength = 10)
+mars_pred <- predict(mars_model, newdata = test)
+mars_pred
+confusionMatrix(mars_pred, test$Casualty_Severity)
+```
+
+##Support Vector Machines (SVM)
+The next model that I built was an SVM.
+```{r, include=FALSE}
+svm_model <- svm(Casualty_Severity ~ ., data=train)
+
+#CV SVM
+svm_Linear <- train( Casualty_Severity~., data = train, method = "svmLinear",
+                     trControl=trctrl,
+                     preProcess = c("center", "scale"),
+                     tuneLength = 10)
+test_pred <- predict(svm_Linear, newdata = test)
+test_pred
+confusionMatrix(test_pred, test$Casualty_Severity) 
+#Tuning
+grid <- expand.grid(C = c(0,0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,5))
+set.seed(3233)
+svm_Linear_Grid <- train(Casualty_Severity ~., data = train, method = "svmLinear",
+                         trControl=trctrl,
+                         preProcess = c("center", "scale"),
+                         tuneGrid = grid,
+                         tuneLength = 10)
+test_pred <- predict(svm_Linear_Grid, newdata = test)
+test_pred
+confusionMatrix(test_pred, test$Casualty_Severity) #90%
+
+#Radial SVM
+set.seed(3223)
+svm_Radial <- train(Casualty_Severity ~., data = train, method = "svmRadial",
+                    trControl=trctrl,
+                    preProcess = c("center", "scale"),
+                    tuneLength = 10)
+test_pred <- predict(svm_Radial, newdata = test)
+test_pred
+confusionMatrix(test_pred, test$Casualty_Severity)
+```
+
+I built both a tuned Linear kernel SVM as well as a tuned Radial kernel SVM. 
+
+The accuracy of both linear and radial SVMs were around the same at 90%. But the sensitivity was better in the tuned radial kernel SVM.
+
+##Conclusion
+I used three models, Logistic Regression, Multiadaptive Regression Splines and Support Vector Machines for my analysis of accident data to predict the severity of a casualty, i.e., whether they are slightly injured or severly injured.
+
+Since this is a sensitive topic and we can't afford to be wrong, after performing data preprocessing steps on the data and doing some exploratory data analysis, I decided that my performance metric would primarily be accuracy but that I would also take sensitivity into account.
+
+I cross validated each of my tuned models using my training set and predicted on my test set to get a confusion matrix. From this confusion matrix, I obtained the accuracy and sensitivity.
+
+What is important to note here is that even though the accuracies for each model that I built was high, the sensitivity was incredibly low. This is because the response variable is incredibly unbalanced. Out of 2661 rows, only 271 of them were "Serious" and all the others were "Slight."
+
+Hence, most of my models probably just predicted "Slight" and still got a high accuracy.
+
+Out of all three models, the Radial kernel SVM is the best since it had the highest accuracy.
+
+**However, because of such an imbalance in the response variable and because the sensitivities in all the models were quite low, none of these models should be used for the actual analysis of this data set.**
+Instead, other models such as Random Forests could be used that may perform better with this type of data set.
